@@ -12,7 +12,8 @@ class MyBot(discord.Client):
 
     async def setup_hook(self):
         self.add_view(RepeatView())
-        print("Bot listo y vistas registradas.")
+    await self.tree.sync()   # ← agregá esta línea
+    print("Bot listo y vistas registradas.")
 
 bot = MyBot()
 
