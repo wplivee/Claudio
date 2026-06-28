@@ -38,7 +38,7 @@ class CustomMessageView(discord.ui.View):
                 # Usamos followup en vez de channel.send directo
                 await interaction.followup.send(self.text, ephemeral=False)
                 sent += 1
-                await asyncio.sleep(0.60)
+                await asyncio.sleep(0.75)
             except Exception as e:
                 await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
                 return
