@@ -3,92 +3,110 @@ from discord import app_commands
 import os
 import asyncio
 
-intents = discord.Intents.default()
-
 class MyBot(discord.Client):
     def __init__(self):
-        super().__init__(intents=intents)
+        super().__init__(intents=discord.Intents.default())
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        await self.tree.sync()   # ← agregá esta línea
-        print("Bot listo y vistas registradas.")
+        # Sincroniza los comandos (globales por defecto)
+        await self.tree.sync()
+        print("✅ Comandos sincronizados.")
 
 bot = MyBot()
+OWNER_ID = int(os.getenv("OWNER_ID", 0))
 
+# Vista con botones persistentes
+class CustomMessageView(discord.ui.View):
+    def __init__(self, text: str, count: int, author: discord.Member):
+        super().__init__(timeout=None)  # vista persistente
+        self.text = text
+        self.count = count
+        self.author_id = author.id
 
-# ====================== VISTA CON BOTÓN ======================
-class RepeatView(discord.ui.View):
-    def __init__(self, message_content: str = "¡Mensaje por defecto!", repeat_count: int = 5):
-        super().__init__(timeout=None)  # Persistente
-        self.message_content = message_content
-        self.repeat_count = repeat_count
+    # Solo el autor puede interactuar
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Solo el autor puede usar estos botones.", ephemeral=True)
+            return False
+        return True
 
-    @discord.ui.button(label="Repetir Mensaje", style=discord.ButtonStyle.primary, custom_id="repeat_button")
-    async def repeat_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
+    # Botón "➖" para disminuir la cantidad
+    @discord.ui.button(label="➖", style=discord.ButtonStyle.primary, custom_id="decrease")
+    async def decrease(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.count > 1:
+            self.count -= 1
+            embed = discord.Embed(title="Mensaje Personalizado", description=self.text, color=discord.Color.blue())
+            embed.set_footer(text=f"Se repetirá {self.count} veces • Por {interaction.user}")
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer(ephemeral=True)
+            await interaction.followup.send("⚠️ No puedes disminuir más.", ephemeral=True)
 
+    # Botón "➕" para aumentar la cantidad
+    @discord.ui.button(label="➕", style=discord.ButtonStyle.primary, custom_id="increase")
+    async def increase(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.count < 20:
+            self.count += 1
+            embed = discord.Embed(title="Mensaje Personalizado", description=self.text, color=discord.Color.blue())
+            embed.set_footer(text=f"Se repetirá {self.count} veces • Por {interaction.user}")
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer(ephemeral=True)
+            await interaction.followup.send("⚠️ Límite máximo alcanzado.", ephemeral=True)
+
+    # Botón "✅ Enviar" para enviar los mensajes
+    @discord.ui.button(label="✅ Enviar", style=discord.ButtonStyle.success, custom_id="send")
+    async def send(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)  # responder para ganar tiempo
         channel = interaction.channel
-        for i in range(self.repeat_count):
+        sent = 0
+        for i in range(self.count):
             try:
-                await channel.send(self.message_content)
-                await asyncio.sleep(1.5)  # Pausa anti-spam
+                await channel.send(self.text)
+                sent += 1
+                await asyncio.sleep(0.75)  # anti-spam
             except Exception as e:
-                print(f"Error enviando mensaje: {e}")
-                break
+                await interaction.followup.send(f"❌ Error enviando mensajes: {e}", ephemeral=True)
+                return
+        await interaction.followup.send(f"✅ Se enviaron {sent} mensajes.", ephemeral=True)
+        self.stop()
 
-        await interaction.followup.send(f"✅ Se enviaron **{self.repeat_count}** mensajes.", ephemeral=True)
+    # Botón "❌ Cancelar" para cancelar
+    @discord.ui.button(label="❌ Cancelar", style=discord.ButtonStyle.danger, custom_id="cancel")
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("❌ Acción cancelada.", ephemeral=True)
+        self.stop()
 
-
-# ====================== COMANDO SLASH ======================
+# Comando slash /custommessage
 @bot.tree.command(name="custommessage", description="Crea un mensaje personalizado con botón para repetirlo")
-@app_commands.describe(
-    texto="El texto del mensaje que se repetirá",
-    veces="Cuántas veces repetir el mensaje (1-20)"
-)
+@app_commands.describe(texto="El texto del mensaje que se repetirá", veces="Cuántas veces repetir (1-20)")
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 async def custommessage(interaction: discord.Interaction, texto: str, veces: int = 5):
-    veces = max(1, min(20, veces))  # Limitar entre 1 y 20
-
-    embed = discord.Embed(
-        title="Mensaje Personalizado",
-        description=texto,
-        color=discord.Color.blue()
-    )
+    veces = max(1, min(20, veces))
+    embed = discord.Embed(title="Mensaje Personalizado", description=texto, color=discord.Color.blue())
     embed.set_footer(text=f"Se repetirá {veces} veces • Por {interaction.user}")
+    view = CustomMessageView(text=texto, count=veces, author=interaction.user)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    view = RepeatView(message_content=texto, repeat_count=veces)
-
-    await interaction.response.send_message(
-        embed=embed,
-        view=view,
-        ephemeral=True
-    )
-
-
-# ====================== SINCRONIZACIÓN ======================
+# Comando /sync (solo el owner)
 @bot.tree.command(name="sync", description="Sincroniza los comandos slash (solo owner)")
 async def sync(interaction: discord.Interaction):
-    owner_id = int(os.getenv("OWNER_ID", 0))
-    if interaction.user.id != owner_id:
+    if interaction.user.id != OWNER_ID:
         await interaction.response.send_message("❌ Solo el owner puede usar este comando.", ephemeral=True)
         return
-
     await interaction.response.defer(ephemeral=True)
-    try:
-        synced = await bot.tree.sync()
-        await interaction.followup.send(f"✅ ¡{len(synced)} comandos sincronizados!", ephemeral=True)
-    except Exception as e:
-        await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
-
+    synced = await bot.tree.sync()
+    await interaction.followup.send(f"🔄 Sincronizados {len(synced)} comandos.", ephemeral=True)
 
 @bot.event
 async def on_ready():
-    print(f'✅ {bot.user} está conectado y listo!')
-
+    print(f"🤖 {bot.user} está listo.")
 
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN")
     if not token:
-        print("❌ Error: DISCORD_TOKEN no encontrado en variables de entorno de Railway.")
+        print("❌ Error: Falta la variable DISCORD_TOKEN.")
     else:
         bot.run(token)
