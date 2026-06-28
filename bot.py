@@ -15,6 +15,7 @@ class MyBot(discord.Client):
 bot = MyBot()
 OWNER_ID = int(os.getenv("OWNER_ID", 0))
 
+# Vista con botones
 class CustomMessageView(discord.ui.View):
     def __init__(self, text: str, count: int, author: discord.Member):
         super().__init__(timeout=None)
@@ -52,32 +53,45 @@ class CustomMessageView(discord.ui.View):
     async def send(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         
-        sent = 0
+        channel = interaction.channel
         user = interaction.user
-        
+        sent = 0
+        sent_via = "servidor"
+
         for i in range(self.count):
             try:
-                await user.send(self.text)          # ← Se envía por MD
+                # Intenta primero en el servidor
+                await channel.send(self.text)
                 sent += 1
                 await asyncio.sleep(1.5)
             except discord.Forbidden:
-                await interaction.followup.send("❌ No pude enviarte MD. Abre tus mensajes directos.", ephemeral=True)
-                return
+                # Si falla, intenta por MD
+                try:
+                    await user.send(self.text)
+                    sent += 1
+                    sent_via = "MD"
+                    await asyncio.sleep(1.5)
+                except discord.Forbidden:
+                    await interaction.followup.send("❌ No pude enviar mensajes.\nAbre tus MD o invita el bot al servidor.", ephemeral=True)
+                    return
+                except Exception as e:
+                    await interaction.followup.send(f"❌ Error en MD: {e}", ephemeral=True)
+                    return
             except Exception as e:
                 await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
                 return
 
-        await interaction.followup.send(f"✅ Te envié {sent} mensajes por MD.", ephemeral=True)
+        if sent_via == "MD":
+            await interaction.followup.send(f"⚠️ Bot no invitado al servidor.\n✅ Te envié {sent} mensajes por **MD**.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"✅ Se enviaron {sent} mensajes en el canal.", ephemeral=True)
+        
         self.stop()
 
-    @discord.ui.button(label="❌ Cancelar", style=discord.ButtonStyle.danger, custom_id="cancel")
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("❌ Acción cancelada.", ephemeral=True)
-        self.stop()
-
+# Comando principal
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@bot.tree.command(name="custommessage", description="Crea un mensaje personalizado (se envía por MD)")
+@bot.tree.command(name="custommessage", description="Mensaje personalizado (intenta en servidor, sino MD)")
 @app_commands.describe(texto="El texto del mensaje", veces="Cuántas veces (1-20)")
 async def custommessage(interaction: discord.Interaction, texto: str, veces: int = 5):
     veces = max(1, min(20, veces))
@@ -86,7 +100,7 @@ async def custommessage(interaction: discord.Interaction, texto: str, veces: int
     view = CustomMessageView(text=texto, count=veces, author=interaction.user)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-# Comando sync (solo owner)
+# Comando sync
 @bot.tree.command(name="sync", description="Sincroniza comandos (solo owner)")
 async def sync(interaction: discord.Interaction):
     if interaction.user.id != OWNER_ID:
