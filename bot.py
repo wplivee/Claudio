@@ -35,10 +35,16 @@ class CustomMessageView(discord.ui.View):
         sent = 0
         for i in range(self.count):
             try:
-                # Usamos followup en vez de channel.send directo
                 await interaction.followup.send(self.text, ephemeral=False)
                 sent += 1
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(0.75)   # ← Reducido como pediste
+            except discord.HTTPException as e:
+                if e.code == 429:  # Rate limit
+                    await asyncio.sleep(1)
+                    continue
+                else:
+                    await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+                    return
             except Exception as e:
                 await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
                 return
@@ -46,15 +52,14 @@ class CustomMessageView(discord.ui.View):
         await interaction.followup.send(f"✅ Enviados {sent} mensajes.", ephemeral=True)
         self.stop()
 
-# Comando
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@bot.tree.command(name="custommessage", description="Repite mensaje (app externa)")
-@app_commands.describe(texto="Texto", veces="Veces (1-20)")
+@bot.tree.command(name="custommessage", description="Repite mensaje (soporta @everyone)")
+@app_commands.describe(texto="Texto del mensaje (puedes usar @everyone)", veces="Veces (1-20)")
 async def custommessage(interaction: discord.Interaction, texto: str, veces: int = 5):
     veces = max(1, min(20, veces))
     embed = discord.Embed(title="Mensaje Personalizado", description=texto, color=discord.Color.blue())
-    embed.set_footer(text=f"Se repetirá {veces} veces")
+    embed.set_footer(text=f"Se repetirá {veces} veces • Por {interaction.user}")
     view = CustomMessageView(text=texto, count=veces, author=interaction.user)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
@@ -64,4 +69,7 @@ async def on_ready():
 
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN")
-    bot.run(token)
+    if not token:
+        print("❌ Falta DISCORD_TOKEN")
+    else:
+        bot.run(token)
